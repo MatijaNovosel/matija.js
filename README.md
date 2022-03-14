@@ -1,2 +1,2 @@
-# nazar
-Javascript UI framework 🧿
+# matija.js
+Javascript UI framework
