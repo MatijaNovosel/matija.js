@@ -1,14 +1,11 @@
-class TestComponent extends NazarComponent {
-  data() {
-    return {
-      stateVar: "test"
-    };
-  }
+import MatijaJS from "../src/index";
+
+class TestComponent extends FoundationComponent {
   content = `
     <div>
-      {{ stateVar }}
+      lolcina
     </div>
   `;
 }
 
-Nazar.mount(TestComponent, document.getElementById("app"));
+MatijaJS.mount(TestComponent, document.getElementById("app"));

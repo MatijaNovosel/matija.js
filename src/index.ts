@@ -1,8 +1,8 @@
-import mountComponent from "./mountComponent";
-import { INazar } from "./interfaces/nazar";
+import { mountFoundationComponent } from "./mountComponent";
+import { IMatijaJS } from "./interfaces/core";
 
-const Nazar: INazar = {
-  mount: mountComponent
+const MatijaJS: IMatijaJS = {
+  mount: mountFoundationComponent
 };
 
-export default Nazar;
+export default MatijaJS;
