@@ -118,9 +118,7 @@ export interface InjectedProps {
 
 let domUpdater = new DOMUpdater(mountComponent);
 
-export function createElementFactory(
-  includes: Map<string, ComponentClass>
-): CreateElement {
+export function createElementFactory(): CreateElement {
   return function (
     type: string | (new (props: any) => Component),
     props: Record<string, any> = {},
@@ -135,17 +133,10 @@ export function createElementFactory(
     let componentClass;
 
     if (typeof type == "function") {
-      // First argument is a component class
       nodeType = "component";
       tag = "";
       componentClass = type;
-    } else if (includes.has(type)) {
-      // First argument is the name of a component in the includes map
-      nodeType = "component";
-      tag = "";
-      componentClass = includes.get(type);
     } else {
-      // First argument is a regular element tag
       nodeType = "element";
       tag = type;
     }
@@ -159,26 +150,8 @@ export function createElementFactory(
       componentClass: componentClass
     };
 
-    vNode.children = children.map((child) => {
-      if (isVNode(child)) {
-        return child;
-      } else {
-        return {
-          nodeType: "text",
-          tag: "",
-          text: child,
-          attrs: {},
-          children: []
-        };
-      }
-    });
-
     return vNode;
   };
-}
-
-function isVNode(child: unknown): child is VirtualNode {
-  return child != null && (child as VirtualNode).nodeType !== undefined;
 }
 
 function bindAllMethods(
@@ -191,6 +164,84 @@ function bindAllMethods(
   });
 }
 
+export function htmlToDom(html: string): Element {
+  let document = new DOMParser().parseFromString(html, "text/html");
+  let wrapperNode = document.body;
+  return wrapperNode.children[0];
+}
+
+const cache = new Map<string, string>();
+
+function compileNode(vNode: VirtualNode): string {
+  if (vNode.nodeType === "text") {
+    let text = vNode.text.replace(/\n/g, "\\n");
+    text = compileText(text);
+    return text;
+  } else {
+    return compileElement(vNode);
+  }
+}
+
+function compileElement(vNode: VirtualNode): string {
+  let code = "h(";
+  code += "'" + vNode.tag + "'";
+  code += ")";
+  return code;
+}
+
+function compileText(text: string) {
+  if (text.length < 5) {
+    return "'" + text + "'";
+  }
+  let inExpression = false;
+  let expression = "";
+  let output = "";
+  if (text.charAt(0) !== "{" || text.charAt(1) !== "{") {
+    output += "'";
+  }
+  let char, nextChar;
+  for (let i = 0; i < text.length; i++) {
+    char = text.charAt(i);
+    nextChar = text.length > i ? text.charAt(i + 1) : false;
+    if (char === "{" && nextChar && nextChar === "{") {
+      if (i !== 0) {
+        output += "'+";
+      }
+      output += "(";
+      i++;
+      inExpression = true;
+    } else if (char === "}") {
+      i++;
+      output += expression + ")";
+      inExpression = false;
+      expression = "";
+      if (i !== text.length - 1) {
+        output += "+'";
+      }
+    } else if (inExpression) {
+      expression += char;
+    } else {
+      output += char;
+    }
+  }
+  if (char !== "'" && char !== "}") {
+    output += "'";
+  }
+  return output;
+}
+
+export function compileTemplate(template: string): string {
+  let cachedCode = cache.get(template);
+  if (cachedCode) {
+    return cachedCode;
+  }
+  let node = htmlToDom(template);
+  let vNode = mapVNode(node, false);
+  let code = "with(this){return " + compileNode(vNode) + "}";
+  cache.set(template, code);
+  return code;
+}
+
 export function mountComponent(
   ComponentClass: ComponentClass,
   element: Element,
@@ -199,6 +250,15 @@ export function mountComponent(
   vOldNode: VirtualNode
 ): Element {
   let component = new ComponentClass(props);
+
+  if (!component.render) {
+    if (component.content) {
+      let renderMethodCode = compileTemplate(component.content);
+      component.render = new Function("h", renderMethodCode) as Render;
+    } else {
+      throw new Error();
+    }
+  }
 
   component.$element = element;
   component.$vnode = vOldNode;
@@ -272,7 +332,7 @@ export class DiffEngine {
     if (newElement) {
       return newElement;
     } else {
-      throw new Error("Patch function did not return an element");
+      throw new Error();
     }
   }
 
@@ -291,7 +351,6 @@ export class DiffEngine {
       return (node) => this.domUpdater.removeNode(node);
     }
 
-    // If one node is text and the texts don't match or one is not text
     if (
       (vOldNode.nodeType === "text" || vNewNode.nodeType === "text") &&
       (vNewNode.text !== vOldNode.text ||
@@ -303,118 +362,31 @@ export class DiffEngine {
 
     if (vNewNode.nodeType === "component") {
       if (vOldNode.componentClass !== vNewNode.componentClass) {
-        // Component is replacing non-component or replacing different component
         return (node) =>
           this.domUpdater.mountComponentOnNode(node, vOldNode, vNewNode);
       } else {
-        // Same component already exists here so update props
         const props = vNewNode.attrs;
         props.children = vNewNode.children;
-        // return (node) => this.domUpdater.setComponentPropsOnNode(node, props);
       }
     }
 
     if (vOldNode.tag !== vNewNode.tag) {
-      // New node is not component
-
       return (node) => {
         if (vOldNode.nodeType === "component") {
-          // Non-component is replacing component so unmount old component
           this.domUpdater.unmountComponentOnNode(node);
         }
         return this.domUpdater.replaceNode(node, vNewNode);
       };
     }
 
-    let patchAttrs = this.diffAttributes(vOldNode.attrs, vNewNode.attrs);
-    const patchChildren = this.diffChildren(
-      vOldNode.children,
-      vNewNode.children
-    );
-
     return (node) => {
-      patchAttrs(node);
-      patchChildren(node);
       return node;
-    };
-  }
-
-  private diffAttributes(
-    vOldAttrs: Record<string, any>,
-    vNewAttrs: Record<string, any>
-  ): PatchFunction {
-    let patches: PatchFunction[] = [];
-
-    // set new attributes
-    for (const [vNewAttrName, vNewAttrValue] of Object.entries(vNewAttrs)) {
-      patches.push((node) => {
-        this.domUpdater.setAttribute(node, vNewAttrName, vNewAttrValue);
-        return node;
-      });
-    }
-
-    // remove old attributes
-    for (const vOldAttrName in vOldAttrs) {
-      // If an old attribute doesn't exist in the new vNode
-      // OR the old attribute is now undefined or null, remove it
-      if (!(vOldAttrName in vNewAttrs) || vNewAttrs[vOldAttrName] == null) {
-        patches.push((node) => {
-          this.domUpdater.removeAttribute(node, vOldAttrName);
-          return node;
-        });
-      }
-    }
-
-    return (node) => {
-      for (const patch of patches) {
-        patch(node);
-      }
-      return node;
-    };
-  }
-
-  private diffChildren(
-    vOldChildren: VirtualNode[] = [],
-    vNewChildren: VirtualNode[] = []
-  ): PatchFunction {
-    const childPatches: PatchFunction[] = [];
-
-    vOldChildren.forEach((vOldChild, i) => {
-      childPatches.push(this.diffNodes(vOldChild, vNewChildren[i]));
-    });
-
-    const additionalPatches: PatchFunction[] = [];
-    for (const additionalVChild of vNewChildren.slice(vOldChildren.length)) {
-      additionalPatches.push((parent) =>
-        this.domUpdater.appendChildNode(parent, additionalVChild)
-      );
-    }
-
-    return (parent) => {
-      if (childPatches.length !== parent.childNodes.length) {
-        throw new Error(
-          "Actual child nodes in DOM does not match number of child patches"
-        );
-      }
-
-      let patchChildNodesPairs = zip(childPatches, parent.childNodes);
-      for (const pair of patchChildNodesPairs) {
-        const patch = pair.left;
-        const child = pair.right;
-        patch(child as Element);
-      }
-
-      for (const patch of additionalPatches) {
-        patch(parent);
-      }
-
-      return parent;
     };
   }
 }
 
 export function updateComponent(component: Component): Component {
-  let createElement = createElementFactory(component.includes);
+  let createElement = createElementFactory();
   let newVNode = component.render(createElement);
 
   let diffEngine = new DiffEngine(domUpdater);
