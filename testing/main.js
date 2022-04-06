@@ -1,6 +1,6 @@
-import MatijaJS from "../src/index";
+import MatijaJS from "../dist/matija-js.js";
 
-class TestComponent extends FoundationComponent {
+class TestComponent {
   content = `
     <div>
       lolcina

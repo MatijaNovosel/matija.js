@@ -1,7 +1,54 @@
 import { VirtualNode } from "./interfaces/virtualNode";
 import { ComponentClass } from "./interfaces/component";
-import { mapVNode } from "./mountComponent";
-import { isFunction } from "./helpers/helpers";
+import { isFunction } from "./helpers";
+
+function createChildren(
+  children: NodeListOf<ChildNode>,
+  includeComments: boolean
+): VirtualNode[] {
+  let vChildren: VirtualNode[] = [];
+  Array.prototype.forEach.call(children, (child) => {
+    if (includeComments || child.nodeType !== 8) {
+      let vNode = createVNode(child, includeComments);
+      vChildren.push(vNode);
+    }
+  });
+  return vChildren;
+}
+
+function createVNode(node: Element, includeComments: boolean): VirtualNode {
+  if (node.nodeType === 1) {
+    // Node is an element
+    let vNode: VirtualNode = {
+      nodeType: "element",
+      tag: node.tagName.toLowerCase(),
+      text: "",
+      attrs: {},
+      children: []
+    };
+    Array.prototype.forEach.call(node.attributes, (attr) => {
+      vNode.attrs[attr.name] = attr.value;
+    });
+    vNode.children = createChildren(node.childNodes, includeComments);
+    return vNode;
+  } else {
+    // Node is text or comment
+    return {
+      nodeType: node.nodeType === 8 ? "comment" : "text",
+      text: node.textContent || "",
+      tag: "",
+      attrs: {},
+      children: []
+    };
+  }
+}
+
+export function mapVNode(
+  rootNode: Element,
+  includeComments: boolean = true
+): VirtualNode {
+  return createVNode(rootNode, includeComments);
+}
 
 interface MountFunction {
   (
